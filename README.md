@@ -15,7 +15,7 @@ name: Commit authors
 on:
   pull_request:
   push:
-    branches: ['**']
+    branches: [main]
 
 permissions:
   contents: read
@@ -27,6 +27,8 @@ jobs:
 ```
 
 The check reports as `Commit authors / Check commit authors`, which is the name to require in a ruleset.
+
+`pull_request` checks every commit of a pull request, including the owner identity rule. `push` is limited to the default branch, where it checks what lands there, including pushes made through a ruleset bypass. Running `push` on every branch would report the same check twice on each pull request from a branch of the repository.
 
 ## Branch ruleset
 
