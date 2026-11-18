@@ -43,7 +43,8 @@ jobs:
           if [ "$EVENT" = "pull_request" ]; then
             echo "range=$PR_BASE..$PR_HEAD" >> "$GITHUB_OUTPUT"
             echo "pr-author=$PR_AUTHOR" >> "$GITHUB_OUTPUT"
-          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            # New branch, or a force push that dropped the previous tip.
             echo "range=origin/$DEFAULT_BRANCH..$AFTER" >> "$GITHUB_OUTPUT"
           else
             echo "range=$BEFORE..$AFTER" >> "$GITHUB_OUTPUT"
