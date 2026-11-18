@@ -1,0 +1,120 @@
+# Reusable workflow: checks the authors of the commits of a pull request or push.
+#
+# Rule 1 (always): no commit may be authored or committed by a known AI agent, name one in a
+#   Co-authored-by trailer or carry an agent signature in its message.
+# Rule 2 (only when the pull request author is the repository owner): every author and committer
+#   must be one of the owner's identities. Co-authored-by trailers are free apart from rule 1.
+#
+# Call it from a workflow triggered by `pull_request` and/or `push`:
+#
+#   jobs:
+#     commit-authors:
+#       name: Commit authors
+#       uses: douglasjunior/workflows/.github/workflows/commit-authors.yml@v1
+
+name: Commit authors
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check commit authors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the commit range
+        id: range
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$EVENT" = "pull_request" ]; then
+            echo "range=$PR_BASE..$PR_HEAD" >> "$GITHUB_OUTPUT"
+            echo "pr-author=$PR_AUTHOR" >> "$GITHUB_OUTPUT"
+          elif [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+            echo "range=origin/$DEFAULT_BRANCH..$AFTER" >> "$GITHUB_OUTPUT"
+          else
+            echo "range=$BEFORE..$AFTER" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check the commits
+        env:
+          RANGE: ${{ steps.range.outputs.range }}
+          OWNER_LOGIN: ${{ github.repository_owner }}
+          PR_AUTHOR: ${{ steps.range.outputs.pr-author }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          range="$RANGE"
+          owner_login="$OWNER_LOGIN"
+          pr_author="$PR_AUTHOR"
+
+          AI_EMAIL='anthropic\.com|claude|copilot|cursoragent|@cursor\.com|openai|codex|chatgpt|gemini|jules|devin-ai|cognition|aider|windsurf|codeium|amazonq|openhands|antigravity|opencode'
+          AI_NAME='claude|copilot|cursor agent|codex|chatgpt|gemini|devin ai|devin-ai|aider|jules\[bot\]|google jules|windsurf|openhands|antigravity'
+          AI_SIGNATURE='^Claude-Session:|Generated with \[?(Claude|Codex|Cursor|Copilot|Gemini|Devin)'
+
+          OWNER_EMAIL='^(nassifrroma@gmail\.com|([0-9]+\+)?douglasjunior@users\.noreply\.github\.com)$'
+          OWNER_COMMITTER_EMAIL='^(nassifrroma@gmail\.com|([0-9]+\+)?douglasjunior@users\.noreply\.github\.com|noreply@github\.com)$'
+
+          check_owner=false
+          if [ -n "$owner_login" ] && [ "$(tr '[:upper:]' '[:lower:]' <<<"$pr_author")" = "$(tr '[:upper:]' '[:lower:]' <<<"$owner_login")" ]; then
+            check_owner=true
+          fi
+
+          commits="$(git rev-list "$range")"
+
+          failures=0
+          fail() {
+            echo "::error::$1"
+            failures=$((failures + 1))
+          }
+
+          while read -r sha; do
+            [ -n "$sha" ] || continue
+            short="${sha:0:7}"
+            subject="$(git show -s --format=%s "$sha")"
+            label="$short \"$subject\""
+            author_name="$(git show -s --format=%an "$sha")"
+            author_email="$(git show -s --format=%ae "$sha")"
+            committer_name="$(git show -s --format=%cn "$sha")"
+            committer_email="$(git show -s --format=%ce "$sha")"
+            message="$(git show -s --format=%B "$sha")"
+            coauthors="$(grep -iE '^Co-authored-by:' <<<"$message" || true)"
+
+            for who in "author|$author_name|$author_email" "committer|$committer_name|$committer_email"; do
+              IFS='|' read -r role name email <<<"$who"
+              if grep -qiE "$AI_EMAIL" <<<"$email" || grep -qiE "$AI_NAME" <<<"$name"; then
+                fail "$label: $role '$name <$email>' is blocked because it is a known AI agent"
+              fi
+            done
+
+            while IFS= read -r line; do
+              [ -n "$line" ] && fail "$label: '$line' is blocked because it names a known AI agent"
+            done < <(grep -iE "$AI_EMAIL|$AI_NAME" <<<"$coauthors" || true)
+            while IFS= read -r line; do
+              [ -n "$line" ] && fail "$label: '$line' is blocked because it is an AI agent signature"
+            done < <(grep -iE "$AI_SIGNATURE" <<<"$message" || true)
+
+            if $check_owner; then
+              grep -qE "$OWNER_EMAIL" <<<"$author_email" || fail "$label: author '$author_name <$author_email>' is not one of the owner's identities"
+              grep -qE "$OWNER_COMMITTER_EMAIL" <<<"$committer_email" || fail "$label: committer '$committer_name <$committer_email>' is not one of the owner's identities"
+            fi
+          done <<<"$commits"
+
+          if [ "$failures" -ne 0 ]; then
+            echo "::error::$failures problem(s) found. Fix the commits listed above (git rebase -i, git commit --amend --reset-author or git filter-repo) and force-push the branch."
+            exit 1
+          fi
+          echo "All commits in $range passed."
