@@ -47,14 +47,15 @@ The required check names are the check run names shown on a pull request. A job 
 
 ### Applying it to a repository
 
-1. Add the repository's CI checks to `required_status_checks` in a copy of the JSON.
-2. Create the ruleset:
+1. Install `douglasjunior-bot` on the repository. A ruleset can only list an App that is installed on the repository.
+2. Add the repository's CI checks to `required_status_checks` in a copy of the JSON.
+3. Create the ruleset:
 
    ```bash
    gh api -X POST repos/douglasjunior/<repo>/rulesets --input protected-branches.json
    ```
 
-3. Install `douglasjunior-bot` on the repository if a workflow pushes to a protected branch, and set the `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` secrets.
+4. If a workflow pushes to a protected branch, set the `RELEASE_APP_ID` and `RELEASE_APP_PRIVATE_KEY` secrets.
 
 ## Versioning
 
